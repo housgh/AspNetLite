@@ -13,33 +13,40 @@ public static class AppServerControllerExtensions
 
     private static async Task HandleRequest(AppServer appServer, HttpContext context, Func<HttpContext, Task> next)
     {
-        var method = context.Request.Method;
-        var route = context.Request.Route;
-
-        var response = context.Response;
-        
-        var endpointData = appServer.Endpoints.FromRoute(route, method);
-
-        if (endpointData.Endpoint is null || endpointData.Data is null)
+        try
         {
-            await ReturnStatusCode(response, HttpStatusCode.NotFound);
-            return;
-        }
+            var method = context.Request.Method;
+            var route = context.Request.Route;
+
+            var response = context.Response;
         
-        context.Request.RouteData = endpointData.Data;
+            var endpointData = appServer.Endpoints.FromRoute(route, method);
 
-        var arguments = GetEndpointArguments(context, endpointData.Endpoint, endpointData.Data);
-        var responseData= endpointData.Endpoint.DynamicInvoke(arguments);
+            if (endpointData.Endpoint is null || endpointData.Data is null)
+            {
+                await ReturnStatusCode(response, HttpStatusCode.NotFound);
+                return;
+            }
+        
+            context.Request.RouteData = endpointData.Data;
 
-        if (responseData is null)
+            var arguments = GetEndpointArguments(context, endpointData.Endpoint, endpointData.Data);
+            var responseData= endpointData.Endpoint.DynamicInvoke(arguments);
+
+            if (responseData is null)
+            {
+                await ReturnStatusCode(response, HttpStatusCode.NoContent);
+                return;
+            }
+        
+            await ReturnStatusCode(response, HttpStatusCode.OK, responseData);
+        
+            await next(context);
+        }
+        catch (Exception ex)
         {
-            await ReturnStatusCode(response, HttpStatusCode.NoContent);
-            return;
+            await ReturnStatusCode(context.Response, HttpStatusCode.InternalServerError, ex.ToString(), "text/plain");
         }
-        
-        await ReturnStatusCode(response, HttpStatusCode.OK, responseData);
-        
-        await next(context);
     }
 
     private static object?[] GetEndpointArguments(HttpContext context, Delegate endpoint, RouteData routeData)
@@ -71,12 +78,12 @@ public static class AppServerControllerExtensions
         return arguments.ToArray();
     }
 
-    private static async Task ReturnStatusCode(HttpResponse response, HttpStatusCode statusCode, object? content = null)
+    private static async Task ReturnStatusCode(HttpResponse response, HttpStatusCode statusCode, object? content = null, string? contentType = null)
     {
         var stream = response.Writer;
         response.StatusCode = statusCode;
         response.Content = content;
-        response.Headers.ContentType = "application/json";
+        response.Headers.ContentType = contentType ?? "application/json";
         await stream.WriteAsync(response.ToString());
         await stream.FlushAsync();
     }
